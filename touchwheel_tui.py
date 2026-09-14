@@ -279,6 +279,16 @@ class TouchwheelApp(App):
     }
     .row Checkbox.-on > .toggle--button { color: $text-success; }
     .row Checkbox:focus { background: transparent; background-tint: 0%; }
+    /* On focus Textual paints toggle--label with the block cursor. These
+       checkboxes carry no label, so that renders as a bare coloured square
+       next to the mark. */
+    .row Checkbox > .toggle--label,
+    .row Checkbox:focus > .toggle--label,
+    .row Checkbox.-on:focus > .toggle--label {
+        background: transparent;
+        color: $text;
+        text-style: none;
+    }
     .row Checkbox:focus > .toggle--button,
     .row Checkbox.-on:focus > .toggle--button {
         background: transparent;
