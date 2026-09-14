@@ -255,14 +255,25 @@ class TouchwheelApp(App):
         background: $boost;
     }
     .row Input:focus { background: $accent 30%; }
+    /* Textual paints a Checkbox's marker cell with its own accent block. Next
+       to a column of plain numeric fields that reads as an error state, so
+       flatten it and let focus show as colour on the mark alone. */
     .row Checkbox {
-        width: 10;
+        width: 4;
         height: 1;
         border: none;
         padding: 0;
         background: transparent;
     }
-    .row Checkbox:focus { background: $accent 30%; }
+    .row Checkbox > .toggle--button {
+        background: transparent;
+        color: $text;
+    }
+    .row Checkbox:focus { background: transparent; }
+    .row Checkbox:focus > .toggle--button {
+        color: $accent;
+        text-style: bold;
+    }
     .hint { color: $text-muted; padding-left: 2; }
     #saved { padding: 0 2; color: $success; height: 1; }
     """
