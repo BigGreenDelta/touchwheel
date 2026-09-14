@@ -95,10 +95,11 @@ dashes replaced by underscores. The background copy is launched with **no argume
 reads that file at startup, so changing a value takes effect on the next start without
 touching the autostart entry. An explicit command-line flag still overrides the file.
 
-A Textual UI edits them, with autostart and process controls on the same screen:
+A Textual UI edits them, with autostart and process controls on the same screen. It is what
+you get by running the launcher with no arguments or double-clicking it:
 
 ```powershell
-touchwheel-service.cmd config
+touchwheel-service.cmd
 ```
 
 `s` saves, `r` saves and restarts the background copy, `q` quits. Textual is pulled in on
@@ -106,7 +107,8 @@ demand by `uv run --with textual`; it is not a dependency of the shim itself.
 
 ## Running it in the background
 
-Run `touchwheel-service.cmd` with no arguments, or double-click it, for a menu:
+If the Textual UI cannot start, the launcher falls back to a plain menu, also reachable as
+`touchwheel-service.cmd menu`:
 
 ```
   Autostart : NOT installed

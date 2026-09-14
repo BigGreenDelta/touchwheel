@@ -25,10 +25,11 @@ if not exist "%SCRIPT%" (
     exit /b 1
 )
 
-rem No argument means a person ran it, most likely by double-clicking: show the
-rem menu. Named actions still work for scripting.
+rem No argument means a person ran it, most likely by double-clicking: open the
+rem Textual UI, falling back to the plain menu if it cannot start. Named
+rem actions still work for scripting.
 set "ACTION=%~1"
-if "%ACTION%"=="" goto :menu
+if "%ACTION%"=="" goto :default_view
 
 if /i "%ACTION%"=="install"   goto :install
 if /i "%ACTION%"=="uninstall" goto :uninstall
@@ -40,6 +41,18 @@ if /i "%ACTION%"=="menu"      goto :menu
 if /i "%ACTION%"=="config"    goto :config
 if /i "%ACTION%"=="tui"       goto :config
 goto :help
+
+
+:default_view
+call :seed_settings
+call :config
+if errorlevel 1 (
+    echo.
+    echo Textual UI could not start; falling back to the plain menu.
+    echo.
+    goto :menu
+)
+exit /b 0
 
 
 :config

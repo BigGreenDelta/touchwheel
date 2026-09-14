@@ -18,8 +18,8 @@ from ctypes import wintypes
 
 from textual import on
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widgets import Button, Footer, Header, Input, Label, Static
+from textual.containers import Horizontal, VerticalScroll
+from textual.widgets import Button, Checkbox, Footer, Header, Input, Label, Static
 
 import touchwheel
 
@@ -230,16 +230,41 @@ def stop_process() -> None:
 
 
 class TouchwheelApp(App):
+    # Textual's defaults are generous: an Input carries a border and so is
+    # three rows tall, and a Button likewise. Eleven settings then need a
+    # scrollback of their own. Strip the borders and keep every field on one
+    # row, with its explanation beside it rather than beneath it.
     CSS = """
     Screen { layout: vertical; }
-    #state { padding: 1 2; background: $boost; }
-    #actions { height: auto; padding: 0 2 1 2; }
-    #actions Button { margin-right: 1; }
-    .row { height: auto; padding: 0 2; }
-    .row Label { width: 42; padding-top: 1; }
-    .row Input { width: 18; }
-    .hint { color: $text-muted; padding: 0 2 1 44; }
-    #saved { padding: 0 2; color: $success; }
+    #state { padding: 0 2; background: $boost; height: 2; }
+    #actions { height: 1; padding: 0 2; margin-bottom: 1; }
+    #actions Button {
+        height: 1;
+        min-width: 0;
+        border: none;
+        margin-right: 2;
+        padding: 0 1;
+    }
+    .row { height: 1; padding: 0 2; }
+    .row Label { width: 34; }
+    .row Input {
+        width: 10;
+        height: 1;
+        border: none;
+        padding: 0 1;
+        background: $boost;
+    }
+    .row Input:focus { background: $accent 30%; }
+    .row Checkbox {
+        width: 10;
+        height: 1;
+        border: none;
+        padding: 0;
+        background: transparent;
+    }
+    .row Checkbox:focus { background: $accent 30%; }
+    .hint { color: $text-muted; padding-left: 2; }
+    #saved { padding: 0 2; color: $success; height: 1; }
     """
 
     BINDINGS = [
@@ -259,15 +284,13 @@ class TouchwheelApp(App):
         with VerticalScroll():
             values = {**DEFAULTS, **touchwheel.load_settings()}
             for dest, label, kind, hint in FIELDS:
-                with Vertical(classes="row"):
-                    with Horizontal():
-                        yield Label(label)
-                        current = values.get(dest, DEFAULTS[dest])
-                        if kind == "bool":
-                            text = "yes" if current else "no"
-                        else:
-                            text = str(current)
-                        yield Input(value=text, id=f"f_{dest}")
+                with Horizontal(classes="row"):
+                    yield Label(label)
+                    current = values.get(dest, DEFAULTS[dest])
+                    if kind == "bool":
+                        yield Checkbox(value=bool(current), id=f"f_{dest}")
+                    else:
+                        yield Input(value=str(current), id=f"f_{dest}")
                     yield Static(hint, classes="hint")
         yield Static("", id="saved")
         yield Footer()
@@ -288,21 +311,15 @@ class TouchwheelApp(App):
     def collect(self) -> dict | None:
         values: dict[str, object] = {}
         for dest, label, kind, _hint in FIELDS:
-            raw = self.query_one(f"#f_{dest}", Input).value.strip()
             if kind == "bool":
-                if raw.lower() in ("yes", "true", "1", "on"):
-                    values[dest] = True
-                elif raw.lower() in ("no", "false", "0", "off"):
-                    values[dest] = False
-                else:
-                    self.notify(f"{label}: expected yes or no", severity="error")
-                    return None
-            else:
-                try:
-                    values[dest] = float(raw)
-                except ValueError:
-                    self.notify(f"{label}: expected a number", severity="error")
-                    return None
+                values[dest] = bool(self.query_one(f"#f_{dest}", Checkbox).value)
+                continue
+            raw = self.query_one(f"#f_{dest}", Input).value.strip()
+            try:
+                values[dest] = float(raw)
+            except ValueError:
+                self.notify(f"{label}: expected a number", severity="error")
+                return None
         return values
 
     def action_save(self) -> None:
