@@ -671,6 +671,18 @@ class MouseWatcher:
         """Discount moves this program is about to make itself."""
         self.ignore_until = time.monotonic() + seconds
 
+    def prime(self) -> None:
+        """Seed the position at startup, when no touch can be in progress.
+
+        Without this there is nothing to restore until the mouse is physically
+        moved at least once, so the first touches of a session leave the
+        pointer stranded.
+        """
+        pt = wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        self.x, self.y = pt.x, pt.y
+        self.seen = True
+
     def note_real_move(self) -> None:
         if time.monotonic() < self.ignore_until:
             return
@@ -775,6 +787,7 @@ class Gesture:
         # Windows promotes touch to a mouse move, so a tap drags the pointer to
         # the finger and leaves it there. Remember where it was and put it back.
         self.cursor_before: wintypes.POINT | None = None
+        self.first_point: tuple[int, int] | None = None
         self.last_point: tuple[int, int] | None = None
         self.restore_until = 0.0
         # Fling state: velocity in notches/sec, carried after the finger lifts.
@@ -842,6 +855,7 @@ class Gesture:
         self.capture_hwnd = None
         self.rejected = False
         self.start_y = None
+        self.first_point = None
         self.panning = False
         self.restore_cursor()
 
@@ -862,10 +876,18 @@ class Gesture:
         now = wintypes.POINT()
         user32.GetCursorPos(ctypes.byref(now))
         moved = (now.x, now.y) != (self.cursor_before.x, self.cursor_before.y)
-        near_touch = self.last_point is not None and (
-            abs(now.x - self.last_point[0]) <= self.args.cursor_snap_px
-            and abs(now.y - self.last_point[1]) <= self.args.cursor_snap_px
-        )
+
+        # Compare against where the finger landed, not where it left. Windows
+        # puts the pointer at the touch-down point and, for an app that
+        # consumes the touch itself, never moves it again -- so after a long
+        # drag the pointer is nowhere near the final contact.
+        def near(p) -> bool:
+            return p is not None and (
+                abs(now.x - p[0]) <= self.args.cursor_snap_px
+                and abs(now.y - p[1]) <= self.args.cursor_snap_px
+            )
+
+        near_touch = near(self.first_point) or near(self.last_point)
         if moved and near_touch:
             self.restore_until = time.monotonic() + self.args.cursor_restore_ms / 1000.0
             if self.args.debug:
@@ -1009,6 +1031,8 @@ class Gesture:
 
         point = info.to_screen(x, y) if x is not None else None
         if point is not None:
+            if self.first_point is None:
+                self.first_point = point
             self.last_point = point
         hwnd, by_position = self._target(info, point)
         if hwnd is None:
@@ -1255,6 +1279,8 @@ def run(args: argparse.Namespace) -> int:
 
     handler = HANDLER_ROUTINE(ctrl_handler)
     kernel32.SetConsoleCtrlHandler(handler, True)
+
+    mouse_watcher.prime()
 
     print("touchwheel running. Pan on the touchscreen with Windows Terminal focused.")
     print("Ctrl+C to stop.")
