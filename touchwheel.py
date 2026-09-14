@@ -666,6 +666,9 @@ class MouseWatcher:
         self.y = 0
         self.seen = False
         self.ignore_until = 0.0
+        # Counts genuine mouse movement, so a gesture can tell whether the
+        # pointer was touched by hand while a finger was down.
+        self.moves = 0
 
     def ignore(self, seconds: float = 0.05) -> None:
         """Discount moves this program is about to make itself."""
@@ -690,6 +693,7 @@ class MouseWatcher:
         user32.GetCursorPos(ctypes.byref(pt))
         self.x, self.y = pt.x, pt.y
         self.seen = True
+        self.moves += 1
 
     def last_real_position(self) -> wintypes.POINT | None:
         if not self.seen:
@@ -788,6 +792,7 @@ class Gesture:
         # the finger and leaves it there. Remember where it was and put it back.
         self.cursor_before: wintypes.POINT | None = None
         self.first_point: tuple[int, int] | None = None
+        self.moves_at_start = 0
         self.last_point: tuple[int, int] | None = None
         self.restore_until = 0.0
         # Fling state: velocity in notches/sec, carried after the finger lifts.
@@ -869,6 +874,16 @@ class Gesture:
         final HID report.
         """
         if self.args.no_keep_cursor or self.cursor_before is None:
+            self.restore_until = 0.0
+            self.cursor_before = None
+            return
+
+        # Raw input saw the physical mouse move while the finger was down. The
+        # pointer is where the hand put it, and putting it back would undo a
+        # deliberate action -- so leave it alone, wherever it ended up.
+        if mouse_watcher.moves != self.moves_at_start:
+            if self.args.debug:
+                print("  cursor left alone: mouse was moved by hand", flush=True)
             self.restore_until = 0.0
             self.cursor_before = None
             return
@@ -1021,6 +1036,7 @@ class Gesture:
             # touch into a mouse move, so the pointer is at the finger and
             # snapshotting it here restores nothing.
             self.cursor_before = mouse_watcher.last_real_position()
+            self.moves_at_start = mouse_watcher.moves
 
         self.last_report = time.monotonic()
 
