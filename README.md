@@ -81,6 +81,29 @@ uv run --no-project python touchwheel.py --no-park
 Leave it running in its own window. Pan on the touchscreen over any Windows Terminal
 window.
 
+Only one copy may run: a second would convert the same pan and deliver every notch twice.
+The process takes a named mutex and a second launch exits immediately (`--allow-multiple`
+overrides, if you have a reason).
+
+## Running it in the background
+
+```
+touchwheel-service.cmd install     start at every logon, and start now
+touchwheel-service.cmd uninstall   stop it and remove autostart
+touchwheel-service.cmd start       start it now
+touchwheel-service.cmd stop        stop it now
+touchwheel-service.cmd status      show autostart state and running processes
+```
+
+Launches `pythonw.exe` (resolved through `uv`), so there is no console window and no `uv`
+wrapper process left in the tree.
+
+**This is deliberately not a Windows service.** Services run in session 0, which cannot see
+the desktop's windows and cannot inject input into them - `SendInput`, `PostMessage` and the
+Raw Input sink all have to live in the interactive session. Autostart therefore goes through
+the per-user `Run` key rather than a scheduled task, because `schtasks /SC ONLOGON` requires
+elevation and this needs none.
+
 ### Delivery modes
 
 | Mode | Behaviour |

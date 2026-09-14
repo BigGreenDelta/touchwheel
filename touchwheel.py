@@ -369,6 +369,12 @@ HANDLER_ROUTINE = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.DWORD)
 kernel32.SetConsoleCtrlHandler.argtypes = [HANDLER_ROUTINE, wintypes.BOOL]
 kernel32.SetConsoleCtrlHandler.restype = wintypes.BOOL
 
+kernel32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+kernel32.CreateMutexW.restype = wintypes.HANDLE
+
+ERROR_ALREADY_EXISTS = 183
+MUTEX_NAME = "Local\\touchwheel-single-instance"
+
 hid.HidP_GetCaps.argtypes = [wintypes.LPVOID, ctypes.POINTER(HIDP_CAPS)]
 hid.HidP_GetCaps.restype = wintypes.LONG
 
@@ -947,7 +953,26 @@ def handle_input(lparam, gesture: Gesture, args: argparse.Namespace) -> None:
         gesture.update(info, contacts, x, y)
 
 
+def claim_single_instance() -> bool:
+    """Take the process-wide lock. False if another copy already holds it.
+
+    Two copies both convert the same pan, so every notch is delivered twice and
+    the scroll reads as doubled. With an installed task and a manual launch
+    both possible, that is easy to do by accident.
+    """
+    kernel32.CreateMutexW(None, True, MUTEX_NAME)
+    return ctypes.get_last_error() != ERROR_ALREADY_EXISTS
+
+
 def run(args: argparse.Namespace) -> int:
+    if not args.allow_multiple and not claim_single_instance():
+        print(
+            "touchwheel is already running. Stop it first, or pass "
+            "--allow-multiple if you really want a second copy.",
+            file=sys.stderr,
+        )
+        return 1
+
     gesture = Gesture(args)
 
     def wndproc(hwnd, msg, wparam, lparam):
@@ -1099,6 +1124,11 @@ def main() -> int:
         type=float,
         default=0.3,
         help="EMA weight for the newest speed sample, 0-1 (default: 0.3)",
+    )
+    parser.add_argument(
+        "--allow-multiple",
+        action="store_true",
+        help="skip the single-instance lock (two copies double every notch)",
     )
     parser.add_argument("--debug", action="store_true", help="print every HID report")
     args = parser.parse_args()
