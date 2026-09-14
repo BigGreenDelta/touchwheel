@@ -46,6 +46,7 @@ RID_INPUT = 0x10000003
 RIDI_PREPARSEDDATA = 0x20000005
 RIDI_DEVICENAME = 0x20000007
 
+RIM_TYPEMOUSE = 0
 RIM_TYPEHID = 2
 WM_INPUT = 0x00FF
 WM_QUIT = 0x0012
@@ -56,6 +57,7 @@ INFINITE = 0xFFFFFFFF
 
 HID_USAGE_PAGE_GENERIC = 0x01
 HID_USAGE_PAGE_DIGITIZER = 0x0D
+HID_USAGE_GENERIC_MOUSE = 0x02
 HID_USAGE_GENERIC_X = 0x30
 HID_USAGE_GENERIC_Y = 0x31
 HID_USAGE_DIGITIZER_TOUCH_SCREEN = 0x04
@@ -648,6 +650,46 @@ def window_center(hwnd) -> tuple[int, int]:
     return (rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2
 
 
+class MouseWatcher:
+    """Tracks where the physical mouse last was.
+
+    Raw Input is what separates a real mouse from the mouse move Windows
+    synthesises out of touch: injected input arrives with a null device handle,
+    a physical device carries its own. A low-level mouse hook cannot make that
+    distinction here -- measured on this hardware, touch-promoted moves carry
+    neither LLMHF_INJECTED nor the MI_WP_SIGNATURE extra info, so every event
+    looks physical.
+    """
+
+    def __init__(self) -> None:
+        self.x = 0
+        self.y = 0
+        self.seen = False
+        self.ignore_until = 0.0
+
+    def ignore(self, seconds: float = 0.05) -> None:
+        """Discount moves this program is about to make itself."""
+        self.ignore_until = time.monotonic() + seconds
+
+    def note_real_move(self) -> None:
+        if time.monotonic() < self.ignore_until:
+            return
+        pt = wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(pt))
+        self.x, self.y = pt.x, pt.y
+        self.seen = True
+
+    def last_real_position(self) -> wintypes.POINT | None:
+        if not self.seen:
+            # No real mouse movement observed yet, so there is nothing to put
+            # back.
+            return None
+        return wintypes.POINT(self.x, self.y)
+
+
+mouse_watcher = MouseWatcher()
+
+
 def send_wheel(notches: int) -> None:
     """Synthesise a wheel event at the current cursor position."""
     evt = INPUT(type=INPUT_MOUSE)
@@ -761,11 +803,13 @@ class Gesture:
         # Park under the finger when the digitizer's screen mapping is known,
         # otherwise fall back to the middle of the target window.
         cx, cy = point if point is not None else window_center(hwnd)
+        mouse_watcher.ignore()
         user32.SetCursorPos(cx, cy)
         self.parked = True
 
     def restore_cursor(self) -> None:
         if self.parked and self.saved_cursor is not None:
+            mouse_watcher.ignore()
             user32.SetCursorPos(self.saved_cursor.x, self.saved_cursor.y)
         self.parked = False
         self.saved_cursor = None
@@ -831,6 +875,10 @@ class Gesture:
                     flush=True,
                 )
         else:
+            if self.args.debug:
+                where = f"({now.x}, {now.y})"
+                why = "pointer never moved" if not moved else "pointer far from touch"
+                print(f"  cursor left at {where}: {why}", flush=True)
             self.restore_until = 0.0
             self.cursor_before = None
 
@@ -841,6 +889,7 @@ class Gesture:
         """
         if self.restore_until:
             if time.monotonic() < self.restore_until and self.cursor_before is not None:
+                mouse_watcher.ignore()
                 user32.SetCursorPos(self.cursor_before.x, self.cursor_before.y)
             else:
                 self.restore_until = 0.0
@@ -945,11 +994,11 @@ class Gesture:
             return
 
         if self.cursor_before is None and not self.args.no_keep_cursor:
-            # First contact of a gesture: snapshot the pointer before Windows
-            # promotes the touch into a mouse move.
-            pt = wintypes.POINT()
-            user32.GetCursorPos(ctypes.byref(pt))
-            self.cursor_before = pt
+            # Where the real mouse last was. Not GetCursorPos: by the time the
+            # first HID report arrives Windows has usually already promoted the
+            # touch into a mouse move, so the pointer is at the finger and
+            # snapshotting it here restores nothing.
+            self.cursor_before = mouse_watcher.last_real_position()
 
         self.last_report = time.monotonic()
 
@@ -1069,6 +1118,12 @@ def handle_input(lparam, gesture: Gesture, args: argparse.Namespace) -> None:
         return
 
     header = ctypes.cast(buf, ctypes.POINTER(RAWINPUTHEADER)).contents
+    if header.dwType == RIM_TYPEMOUSE:
+        # A null device handle means the input was injected -- by this program,
+        # or by the touch-to-mouse promotion. Only a real device counts.
+        if header.hDevice:
+            mouse_watcher.note_real_move()
+        return
     if header.dwType != RIM_TYPEHID:
         return
 
@@ -1168,13 +1223,24 @@ def run(args: argparse.Namespace) -> int:
         print("CreateWindowExW failed", file=sys.stderr)
         return 1
 
-    rid = RAWINPUTDEVICE(
-        usUsagePage=HID_USAGE_PAGE_DIGITIZER,
-        usUsage=HID_USAGE_DIGITIZER_TOUCH_SCREEN,
-        dwFlags=RIDEV_INPUTSINK,
-        hwndTarget=hwnd,
+    # The mouse is registered too, purely to learn where the physical pointer
+    # is: injected input arrives with a null device handle, so real movement
+    # can be told apart from the move Windows makes out of a touch.
+    devices = (RAWINPUTDEVICE * 2)(
+        RAWINPUTDEVICE(
+            usUsagePage=HID_USAGE_PAGE_DIGITIZER,
+            usUsage=HID_USAGE_DIGITIZER_TOUCH_SCREEN,
+            dwFlags=RIDEV_INPUTSINK,
+            hwndTarget=hwnd,
+        ),
+        RAWINPUTDEVICE(
+            usUsagePage=HID_USAGE_PAGE_GENERIC,
+            usUsage=HID_USAGE_GENERIC_MOUSE,
+            dwFlags=RIDEV_INPUTSINK,
+            hwndTarget=hwnd,
+        ),
     )
-    if not user32.RegisterRawInputDevices(ctypes.byref(rid), 1, ctypes.sizeof(rid)):
+    if not user32.RegisterRawInputDevices(devices, 2, ctypes.sizeof(RAWINPUTDEVICE)):
         err = ctypes.get_last_error()
         print(f"RegisterRawInputDevices failed (error {err})", file=sys.stderr)
         return 1
