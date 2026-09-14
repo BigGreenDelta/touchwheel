@@ -298,6 +298,8 @@ class TouchwheelApp(App):
         yield Header()
         yield Static(id="state")
         with Horizontal(id="actions"):
+            yield Button("Save", id="save")
+            yield Button("Save + restart", id="restart", variant="primary")
             yield Button("Start", id="start", variant="success")
             yield Button("Stop", id="stop", variant="error")
             yield Button("Install autostart", id="install")
@@ -360,6 +362,14 @@ class TouchwheelApp(App):
         start_process()
         self.query_one("#saved", Static).update("Restarted with the current settings.")
         self.refresh_state()
+
+    @on(Button.Pressed, "#save")
+    def do_save(self) -> None:
+        self.action_save()
+
+    @on(Button.Pressed, "#restart")
+    def do_restart(self) -> None:
+        self.action_restart()
 
     @on(Button.Pressed, "#start")
     def do_start(self) -> None:
