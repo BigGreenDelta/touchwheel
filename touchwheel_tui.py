@@ -31,7 +31,7 @@ SCRIPT = touchwheel.SETTINGS_PATH.with_name("touchwheel.py")
 FIELDS: list[tuple[str, str, str, str]] = [
     (
         "no_park",
-        "Post wheel directly (no cursor park)",
+        "Post wheel directly",
         "bool",
         "Post WM_MOUSEWHEEL to the terminal instead of moving the cursor.",
     ),
@@ -246,7 +246,10 @@ class TouchwheelApp(App):
         padding: 0 1;
     }
     .row { height: 1; padding: 0 2; }
-    .row Label { width: 34; }
+    /* Wide enough for the longest label, "Fling minimum (notches/sec)", plus a
+       gap. A row is one cell tall, so anything that does not fit is simply
+       cut off rather than wrapped. */
+    .row Label { width: 30; }
     .row Input {
         width: 10;
         height: 1;
