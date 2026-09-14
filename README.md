@@ -61,8 +61,11 @@ Synthetic wheel input does pass the gate. That is the whole trick.
 - The target is the terminal under that point via `WindowFromPoint` ->
   `GetAncestor(GA_ROOT)` -> window class check. Focus is never consulted and never
   changed, which matches how a real wheel scrolls whatever it hovers over.
-- The window is captured for the duration of a gesture, so a finger drifting near a window
-  edge cannot hand successive notches to different windows.
+- **A gesture belongs to the window it started on.** Ownership is decided once, at the first
+  report with a resolved screen point: capture the window if it is a terminal, otherwise
+  ignore the gesture until the finger lifts. Dragging out of a browser and across a terminal
+  therefore does nothing to the terminal, and a captured terminal keeps receiving the pan
+  after the finger leaves it.
 - Travel is converted to wheel notches linearly, with the fractional remainder carried
   between reports so slow pans do not stall.
 
@@ -86,6 +89,24 @@ The process takes a named mutex and a second launch exits immediately (`--allow-
 overrides, if you have a reason).
 
 ## Running it in the background
+
+Run `touchwheel-service.cmd` with no arguments, or double-click it, for a menu:
+
+```
+  Autostart : NOT installed
+  Process   : not running
+
+  [1]  Install autostart  (and start now)
+
+  [2]  Start
+  [3]  Stop
+  [4]  Status
+
+  [5]  Remove autostart   (and stop)
+  [Q]  Quit
+```
+
+The same actions work as arguments, for scripting:
 
 ```
 touchwheel-service.cmd install     start at every logon, and start now
