@@ -48,6 +48,7 @@ WM_QUIT = 0x0012
 WM_MOUSEWHEEL = 0x020A
 PM_REMOVE = 0x0001
 QS_ALLINPUT = 0x04FF
+INFINITE = 0xFFFFFFFF
 
 HID_USAGE_PAGE_GENERIC = 0x01
 HID_USAGE_PAGE_DIGITIZER = 0x0D
@@ -1074,13 +1075,15 @@ def run(args: argparse.Namespace) -> int:
     msg = wintypes.MSG()
     while True:
         # Wake often enough to animate a fling smoothly and to notice a lift
-        # promptly, rarely otherwise.
+        # promptly. With no gesture in progress there is nothing to time, so
+        # block until input arrives rather than polling: a timeout here costs
+        # real idle CPU for no benefit, and WM_INPUT wakes the wait anyway.
         if gesture.flinging:
             timeout = 8
         elif gesture.active:
             timeout = 20
         else:
-            timeout = 200
+            timeout = INFINITE
         user32.MsgWaitForMultipleObjectsEx(0, None, timeout, QS_ALLINPUT, 0)
         while user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, PM_REMOVE):
             if msg.message == WM_QUIT:
