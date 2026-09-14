@@ -258,12 +258,16 @@ class TouchwheelApp(App):
     /* Textual paints a Checkbox's marker cell with its own accent block. Next
        to a column of plain numeric fields that reads as an error state, so
        flatten it and let focus show as colour on the mark alone. */
+    /* ToggleButton defaults to text-overflow: ellipsis, so a narrow box renders
+       the marker as "...". Give it the same width as the numeric column and
+       clip instead of eliding. */
     .row Checkbox {
-        width: 4;
+        width: 10;
         height: 1;
         border: none;
         padding: 0;
         background: transparent;
+        text-overflow: clip;
     }
     /* The .-on variant must be named explicitly: Textual's own default carries
        that extra class, so a plain `Checkbox > .toggle--button` rule loses to
