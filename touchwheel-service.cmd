@@ -56,6 +56,9 @@ echo   [Q]  Quit
 echo.
 set "CHOICE="
 set /p "CHOICE=Select: "
+rem Every option is one character. Truncating also discards a trailing CR,
+rem which set /p keeps when stdin is a pipe with Unix line endings.
+if defined CHOICE set "CHOICE=!CHOICE:~0,1!"
 
 if /i "!CHOICE!"=="1" goto :m_install
 if /i "!CHOICE!"=="2" goto :m_start
@@ -63,7 +66,14 @@ if /i "!CHOICE!"=="3" goto :m_stop
 if /i "!CHOICE!"=="4" goto :m_status
 if /i "!CHOICE!"=="5" goto :m_remove
 if /i "!CHOICE!"=="q" exit /b 0
-if /i "!CHOICE!"=="" goto :menu
+rem An empty answer means Enter, which refreshes. It also means EOF when stdin
+rem is a closed pipe, so give up rather than redraw forever.
+if /i "!CHOICE!"=="" (
+    set /a EMPTY+=1
+    if !EMPTY! geq 3 exit /b 0
+    goto :menu
+)
+set "EMPTY=0"
 echo.
 echo Not an option: !CHOICE!
 goto :menu_pause
