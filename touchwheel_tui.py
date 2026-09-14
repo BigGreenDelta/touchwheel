@@ -265,13 +265,19 @@ class TouchwheelApp(App):
         padding: 0;
         background: transparent;
     }
-    .row Checkbox > .toggle--button {
+    /* The .-on variant must be named explicitly: Textual's own default carries
+       that extra class, so a plain `Checkbox > .toggle--button` rule loses to
+       it and only checked boxes keep the block. */
+    .row Checkbox > .toggle--button,
+    .row Checkbox.-on > .toggle--button {
         background: transparent;
-        color: $text;
+        color: $text-muted;
     }
-    .row Checkbox:focus { background: transparent; }
-    .row Checkbox:focus > .toggle--button {
-        color: $accent;
+    .row Checkbox.-on > .toggle--button { color: $text-success; }
+    .row Checkbox:focus { background: transparent; background-tint: 0%; }
+    .row Checkbox:focus > .toggle--button,
+    .row Checkbox.-on:focus > .toggle--button {
+        background: transparent;
         text-style: bold;
     }
     .hint { color: $text-muted; padding-left: 2; }
