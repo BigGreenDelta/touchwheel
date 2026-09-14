@@ -308,8 +308,8 @@ class TouchwheelApp(App):
         yield Header()
         yield Static(id="state")
         with Horizontal(id="actions"):
-            yield Button("Save", id="save")
             yield Button("Save + restart", id="restart", variant="primary")
+            yield Button("Save", id="save")
             yield Button("Start", id="start", variant="success")
             yield Button("Stop", id="stop", variant="error")
             yield Button("Install autostart", id="install")
