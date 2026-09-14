@@ -88,6 +88,22 @@ Only one copy may run: a second would convert the same pan and deliver every not
 The process takes a named mutex and a second launch exits immediately (`--allow-multiple`
 overrides, if you have a reason).
 
+## Settings
+
+Options live in `touchwheel.json` beside the script, keyed by the long flag name with
+dashes replaced by underscores. The background copy is launched with **no arguments** and
+reads that file at startup, so changing a value takes effect on the next start without
+touching the autostart entry. An explicit command-line flag still overrides the file.
+
+A Textual UI edits them, with autostart and process controls on the same screen:
+
+```powershell
+touchwheel-service.cmd config
+```
+
+`s` saves, `r` saves and restarts the background copy, `q` quits. Textual is pulled in on
+demand by `uv run --with textual`; it is not a dependency of the shim itself.
+
 ## Running it in the background
 
 Run `touchwheel-service.cmd` with no arguments, or double-click it, for a menu:

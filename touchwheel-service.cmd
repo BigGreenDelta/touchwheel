@@ -15,7 +15,10 @@ set "RUN_KEY=HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
 set "RUN_NAME=touchwheel"
 set "SCRIPT_DIR=%~dp0"
 set "SCRIPT=%SCRIPT_DIR%touchwheel.py"
-set "ARGS=--no-park"
+set "SETTINGS=%SCRIPT_DIR%touchwheel.json"
+rem No arguments: touchwheel.py reads touchwheel.json at startup, so editing
+rem settings changes the next run without rewriting the autostart entry.
+set "ARGS="
 
 if not exist "%SCRIPT%" (
     echo ERROR: touchwheel.py not found next to this script.
@@ -34,7 +37,15 @@ if /i "%ACTION%"=="start"     goto :start
 if /i "%ACTION%"=="stop"      goto :stop
 if /i "%ACTION%"=="status"    goto :status
 if /i "%ACTION%"=="menu"      goto :menu
+if /i "%ACTION%"=="config"    goto :config
+if /i "%ACTION%"=="tui"       goto :config
 goto :help
+
+
+:config
+rem The Textual front end also edits the settings the background copy reads.
+uv run --with textual --no-project python "%SCRIPT_DIR%touchwheel_tui.py"
+exit /b %ERRORLEVEL%
 
 
 :menu
@@ -52,6 +63,8 @@ echo   [3]  Stop
 echo   [4]  Status
 echo.
 echo   [5]  Remove autostart   ^(and stop^)
+echo.
+echo   [6]  Settings ^(Textual UI^)
 echo   [Q]  Quit
 echo.
 set "CHOICE="
@@ -65,6 +78,7 @@ if /i "!CHOICE!"=="2" goto :m_start
 if /i "!CHOICE!"=="3" goto :m_stop
 if /i "!CHOICE!"=="4" goto :m_status
 if /i "!CHOICE!"=="5" goto :m_remove
+if /i "!CHOICE!"=="6" goto :m_config
 if /i "!CHOICE!"=="q" exit /b 0
 rem An empty answer means Enter, which refreshes. It also means EOF when stdin
 rem is a closed pipe, so give up rather than redraw forever.
@@ -102,6 +116,10 @@ goto :menu_pause
 echo.
 call :uninstall
 goto :menu_pause
+
+:m_config
+call :config
+goto :menu
 
 
 :menu_pause
@@ -169,8 +187,18 @@ echo Removed autostart.
 exit /b 0
 
 
+:seed_settings
+rem Direct wheel posting is the sane default but the flag is opt-in, so seed a
+rem settings file the first time rather than leaving the background copy in
+rem cursor-park mode.
+if exist "%SETTINGS%" exit /b 0
+> "%SETTINGS%" echo {"no_park": true}
+exit /b 0
+
+
 :start
 call :resolve_pythonw || exit /b 1
+call :seed_settings
 rem touchwheel holds a single-instance mutex, so a second copy exits by itself.
 start "" "!PYTHONW!" "%SCRIPT%" %ARGS%
 echo Started.

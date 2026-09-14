@@ -28,9 +28,13 @@ from __future__ import annotations
 
 import argparse
 import ctypes
+import json
+import pathlib
 import sys
 import time
 from ctypes import wintypes
+
+SETTINGS_PATH = pathlib.Path(__file__).resolve().with_name("touchwheel.json")
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 hid = ctypes.WinDLL("hid", use_last_error=True)
@@ -611,19 +615,31 @@ def send_wheel(notches: int) -> None:
 
 
 def input_site(hwnd):
-    """The XAML island child that actually consumes pointer messages."""
-    found = []
+    """The XAML island child that actually consumes pointer messages.
+
+    A Windows Terminal window has both `Windows.UI.Input.InputSite.WindowClass`
+    and `Windows.UI.Composition.DesktopWindowContentBridge` beneath it. The
+    input site is the one that owns pointer input, so prefer it explicitly
+    rather than taking whichever the enumeration happens to reach first.
+    """
+    sites: list[int] = []
+    bridges: list[int] = []
 
     def cb(child, _lparam):
         buf = ctypes.create_unicode_buffer(256)
         user32.GetClassNameW(child, buf, 256)
-        if "InputSite" in buf.value or "ContentBridge" in buf.value:
-            found.append(child)
-            return False
+        if "InputSite" in buf.value:
+            sites.append(child)
+        elif "ContentBridge" in buf.value:
+            bridges.append(child)
         return True
 
     user32.EnumChildWindows(hwnd, ENUMCHILDPROC(cb), 0)
-    return found[0] if found else hwnd
+    if sites:
+        return sites[0]
+    if bridges:
+        return bridges[0]
+    return hwnd
 
 
 def post_wheel(hwnd, notches: int) -> None:
@@ -1093,6 +1109,23 @@ def run(args: argparse.Namespace) -> int:
         gesture.tick()
 
 
+def load_settings(path: pathlib.Path = SETTINGS_PATH) -> dict:
+    """Saved options, keyed by argparse destination name.
+
+    The background copy is launched with no arguments so that editing settings
+    takes effect on the next start without rewriting the autostart entry.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_settings(values: dict, path: pathlib.Path = SETTINGS_PATH) -> None:
+    path.write_text(json.dumps(values, indent=2) + "\n", encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -1165,6 +1198,11 @@ def main() -> int:
         help="skip the single-instance lock (two copies double every notch)",
     )
     parser.add_argument("--debug", action="store_true", help="print every HID report")
+
+    # Saved settings replace the built-in defaults; an explicit flag still wins.
+    known = {action.dest for action in parser._actions}
+    parser.set_defaults(**{k: v for k, v in load_settings().items() if k in known})
+
     args = parser.parse_args()
 
     try:
