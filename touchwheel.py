@@ -561,6 +561,17 @@ def foreground_terminal() -> wintypes.HWND | None:
     return hwnd if _is_terminal(hwnd) else None
 
 
+def window_at(point: tuple[int, int] | None) -> wintypes.HWND | None:
+    """Top-level window under a screen point, whatever it is."""
+    if point is None:
+        return None
+    pt = wintypes.POINT(point[0], point[1])
+    child = user32.WindowFromPoint(pt)
+    if not child:
+        return None
+    return user32.GetAncestor(child, GA_ROOT)
+
+
 def terminal_at(point: tuple[int, int] | None) -> wintypes.HWND | None:
     """The terminal window under a screen point, focused or not.
 
@@ -638,6 +649,10 @@ class Gesture:
         # Window captured for the current gesture, held until the finger lifts.
         self.capture_hwnd = None
         self.capture_by_position = False
+        # Set when a gesture began over a window that is not a terminal. It
+        # stays set until the finger lifts, so dragging across a terminal
+        # mid-gesture cannot steal the pan.
+        self.rejected = False
         # Tap-vs-pan discrimination: nothing is emitted until the contact has
         # travelled past the slop radius.
         self.start_y: int | None = None
@@ -705,6 +720,7 @@ class Gesture:
         self.residual = 0.0
         self.velocity = 0.0
         self.capture_hwnd = None
+        self.rejected = False
         self.start_y = None
         self.panning = False
         self.restore_cursor()
@@ -764,11 +780,26 @@ class Gesture:
                 return self.capture_hwnd, self.capture_by_position
             self.capture_hwnd = None
 
-        hwnd = terminal_at(point)
-        if hwnd is not None:
-            self.capture_hwnd = hwnd
-            self.capture_by_position = True
-            return hwnd, True
+        # A gesture that began somewhere else belongs to that window for its
+        # whole life. Without this, dragging out of a browser and across a
+        # terminal starts scrolling the terminal too, while the browser keeps
+        # scrolling from the touch input Windows delivered to it directly.
+        if self.rejected:
+            return None, False
+
+        if point is not None:
+            root = window_at(point)
+            if _is_terminal(root):
+                self.capture_hwnd = root
+                self.capture_by_position = True
+                return root, True
+            # Under a real window that is not a terminal: not ours. Under
+            # nothing at all, stay undecided and let the next report try.
+            if root:
+                self.rejected = True
+                if self.args.debug:
+                    print("  gesture ignored: started outside a terminal", flush=True)
+            return None, False
 
         # No screen mapping for this digitizer, so fall back to the focused
         # window. That path needs the settle delay, because Windows Terminal
