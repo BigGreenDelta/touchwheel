@@ -70,10 +70,34 @@ WHEEL_DELTA = 120
 
 HWND_MESSAGE = wintypes.HWND(-3)
 
-# Windows Terminal's top-level window class.
-TERMINAL_CLASSES = {
-    "CASCADIA_HOSTING_WINDOW_CLASS",
-}
+# Window classes acted on by default: terminals and other classic Win32 hosts
+# that ignore touch entirely, so nothing else is already scrolling them.
+DEFAULT_TARGET_CLASSES = (
+    "CASCADIA_HOSTING_WINDOW_CLASS",  # Windows Terminal
+    "ConsoleWindowClass",  # conhost, cmd, PowerShell
+    "VirtualConsoleClass",  # ConEmu
+    "mintty",  # Git Bash
+    "PuTTY",
+    "org.wezfurlong.wezterm",
+    "Alacritty",
+)
+
+# Consulted only in all-windows mode. These handle touch themselves, so adding
+# synthetic wheel on top scrolls them twice.
+DEFAULT_EXCLUDE_CLASSES = (
+    "Chrome_WidgetWin_1",  # Chrome, Edge, Electron
+    "Chrome_WidgetWin_0",
+    "MozillaWindowClass",
+    "ApplicationFrameWindow",  # UWP hosts
+    "Windows.UI.Core.CoreWindow",
+    "CabinetWClass",  # Explorer
+    "ExploreWClass",
+    "Progman",  # desktop
+    "WorkerW",
+    "Shell_TrayWnd",  # taskbar
+    "XLMAIN",  # Excel
+    "OpusApp",  # Word
+)
 
 
 # --- Structures ------------------------------------------------------------
@@ -550,20 +574,50 @@ def read_usage(info: DeviceInfo, page: int, usage: int, report: bytes) -> int | 
     return value.value
 
 
-# --- Terminal targeting ----------------------------------------------------
+# --- Window targeting ------------------------------------------------------
 
 
-def _is_terminal(hwnd) -> bool:
-    if not hwnd:
-        return False
-    buf = ctypes.create_unicode_buffer(256)
-    user32.GetClassNameW(hwnd, buf, 256)
-    return buf.value in TERMINAL_CLASSES
+class Targets:
+    """Which windows a pan should be converted into wheel input for.
+
+    There is no reliable way to ask Windows whether a given window handles
+    touch: an app that consumes WM_POINTER looks the same from outside as one
+    that ignores it. Injecting wheel into an app that already scrolls itself
+    makes it scroll twice, so the decision has to be a list rather than a
+    probe. In list mode only the named classes are acted on; in all-windows
+    mode everything is, except the named exclusions.
+    """
+
+    def __init__(
+        self,
+        classes: str | None = None,
+        exclude: str | None = None,
+        all_windows: bool = False,
+    ) -> None:
+        self.all_windows = all_windows
+        self.classes = self._split(classes, DEFAULT_TARGET_CLASSES)
+        self.exclude = self._split(exclude, DEFAULT_EXCLUDE_CLASSES)
+
+    @staticmethod
+    def _split(value: str | None, fallback) -> set[str]:
+        if not value:
+            return {c.casefold() for c in fallback}
+        return {part.strip().casefold() for part in value.split(",") if part.strip()}
+
+    def matches(self, hwnd) -> bool:
+        if not hwnd:
+            return False
+        buf = ctypes.create_unicode_buffer(256)
+        user32.GetClassNameW(hwnd, buf, 256)
+        name = buf.value.casefold()
+        if self.all_windows:
+            return name not in self.exclude
+        return name in self.classes
 
 
-def foreground_terminal() -> wintypes.HWND | None:
+def foreground_target(targets: Targets) -> wintypes.HWND | None:
     hwnd = user32.GetForegroundWindow()
-    return hwnd if _is_terminal(hwnd) else None
+    return hwnd if targets.matches(hwnd) else None
 
 
 def window_at(point: tuple[int, int] | None) -> wintypes.HWND | None:
@@ -577,21 +631,15 @@ def window_at(point: tuple[int, int] | None) -> wintypes.HWND | None:
     return user32.GetAncestor(child, GA_ROOT)
 
 
-def terminal_at(point: tuple[int, int] | None) -> wintypes.HWND | None:
-    """The terminal window under a screen point, focused or not.
+def target_at(point: tuple[int, int] | None, targets: Targets) -> wintypes.HWND | None:
+    """The targeted window under a screen point, focused or not.
 
     A real wheel scrolls whatever the pointer hovers over, with no focus
     change. Targeting by position rather than focus reproduces that, and
     sidesteps the fact that Windows Terminal takes focus on its own schedule.
     """
-    if point is None:
-        return None
-    pt = wintypes.POINT(point[0], point[1])
-    child = user32.WindowFromPoint(pt)
-    if not child:
-        return None
-    root = user32.GetAncestor(child, GA_ROOT)
-    return root if _is_terminal(root) else None
+    root = window_at(point)
+    return root if targets.matches(root) else None
 
 
 def window_center(hwnd) -> tuple[int, int]:
@@ -657,6 +705,11 @@ def post_wheel(hwnd, notches: int) -> None:
 class Gesture:
     def __init__(self, args: argparse.Namespace) -> None:
         self.args = args
+        self.targets = Targets(
+            classes=getattr(args, "target_classes", None),
+            exclude=getattr(args, "exclude_classes", None),
+            all_windows=getattr(args, "all_windows", False),
+        )
         self.anchor_y: int | None = None
         self.residual = 0.0
         self.saved_cursor: wintypes.POINT | None = None
@@ -677,6 +730,11 @@ class Gesture:
         # Not every digitizer emits a contact-count-zero report on lift, so the
         # end of a gesture is also inferred from reports simply stopping.
         self.last_report = 0.0
+        # Windows promotes touch to a mouse move, so a tap drags the pointer to
+        # the finger and leaves it there. Remember where it was and put it back.
+        self.cursor_before: wintypes.POINT | None = None
+        self.last_point: tuple[int, int] | None = None
+        self.restore_until = 0.0
         # Fling state: velocity in notches/sec, carried after the finger lifts.
         self.velocity = 0.0
         self.last_emit = 0.0
@@ -733,6 +791,7 @@ class Gesture:
                 print(f"  fling start v={self.fling_v:+.1f} notches/s", flush=True)
         else:
             self.stop_fling()
+        self.arm_cursor_restore()
         self.anchor_y = None
         self.residual = 0.0
         self.velocity = 0.0
@@ -742,11 +801,51 @@ class Gesture:
         self.panning = False
         self.restore_cursor()
 
+    def arm_cursor_restore(self) -> None:
+        """Put the pointer back where it was before the finger touched down.
+
+        Only when the pointer is sitting near the last contact, which is the
+        signature of Windows having dragged it there. If it is anywhere else
+        the user moved the mouse during the gesture, and their position wins.
+        Re-asserted for a short window because the promotion can land after the
+        final HID report.
+        """
+        if self.args.no_keep_cursor or self.cursor_before is None:
+            self.restore_until = 0.0
+            self.cursor_before = None
+            return
+
+        now = wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(now))
+        moved = (now.x, now.y) != (self.cursor_before.x, self.cursor_before.y)
+        near_touch = self.last_point is not None and (
+            abs(now.x - self.last_point[0]) <= self.args.cursor_snap_px
+            and abs(now.y - self.last_point[1]) <= self.args.cursor_snap_px
+        )
+        if moved and near_touch:
+            self.restore_until = time.monotonic() + self.args.cursor_restore_ms / 1000.0
+            if self.args.debug:
+                print(
+                    f"  cursor back to ({self.cursor_before.x}, "
+                    f"{self.cursor_before.y})",
+                    flush=True,
+                )
+        else:
+            self.restore_until = 0.0
+            self.cursor_before = None
+
     def tick(self) -> None:
         """Advance a fling and time out abandoned gestures.
 
         Called from the message loop between HID reports.
         """
+        if self.restore_until:
+            if time.monotonic() < self.restore_until and self.cursor_before is not None:
+                user32.SetCursorPos(self.cursor_before.x, self.cursor_before.y)
+            else:
+                self.restore_until = 0.0
+                self.cursor_before = None
+
         if self.active and self.last_report:
             idle_ms = (time.monotonic() - self.last_report) * 1000.0
             if idle_ms > self.args.lift_timeout_ms:
@@ -806,23 +905,23 @@ class Gesture:
 
         if point is not None:
             root = window_at(point)
-            if _is_terminal(root):
+            if self.targets.matches(root):
                 self.capture_hwnd = root
                 self.capture_by_position = True
                 return root, True
-            # Under a real window that is not a terminal: not ours. Under
-            # nothing at all, stay undecided and let the next report try.
+            # Under a real window that is not targeted: not ours. Under nothing
+            # at all, stay undecided and let the next report try.
             if root:
                 self.rejected = True
                 if self.args.debug:
-                    print("  gesture ignored: started outside a terminal", flush=True)
+                    print("  gesture ignored: window not targeted", flush=True)
             return None, False
 
         # No screen mapping for this digitizer, so fall back to the focused
         # window. That path needs the settle delay, because Windows Terminal
         # takes focus on its own schedule and the opening reports of a pan
         # aimed elsewhere still resolve to the previous window.
-        hwnd = foreground_terminal()
+        hwnd = foreground_target(self.targets)
         if hwnd is None:
             return None, False
         key = ctypes.cast(hwnd, ctypes.c_void_p).value
@@ -845,6 +944,13 @@ class Gesture:
                 self.end()
             return
 
+        if self.cursor_before is None and not self.args.no_keep_cursor:
+            # First contact of a gesture: snapshot the pointer before Windows
+            # promotes the touch into a mouse move.
+            pt = wintypes.POINT()
+            user32.GetCursorPos(ctypes.byref(pt))
+            self.cursor_before = pt
+
         self.last_report = time.monotonic()
 
         # A new contact always kills an in-flight fling, the way it does on a
@@ -853,6 +959,8 @@ class Gesture:
             self.stop_fling()
 
         point = info.to_screen(x, y) if x is not None else None
+        if point is not None:
+            self.last_point = point
         hwnd, by_position = self._target(info, point)
         if hwnd is None:
             # Re-anchor while no target is resolved, so travel spent waiting
@@ -1094,7 +1202,7 @@ def run(args: argparse.Namespace) -> int:
         # promptly. With no gesture in progress there is nothing to time, so
         # block until input arrives rather than polling: a timeout here costs
         # real idle CPU for no benefit, and WM_INPUT wakes the wait anyway.
-        if gesture.flinging:
+        if gesture.flinging or gesture.restore_until:
             timeout = 8
         elif gesture.active:
             timeout = 20
@@ -1191,6 +1299,44 @@ def main() -> int:
         type=float,
         default=0.3,
         help="EMA weight for the newest speed sample, 0-1 (default: 0.3)",
+    )
+    parser.add_argument(
+        "--no-keep-cursor",
+        action="store_true",
+        help="let touch drag the mouse pointer, as Windows does by default",
+    )
+    parser.add_argument(
+        "--cursor-restore-ms",
+        type=float,
+        default=200.0,
+        help="how long to hold the pointer in place after a lift, since the "
+        "touch-to-mouse promotion can land after the last HID report "
+        "(default: 200)",
+    )
+    parser.add_argument(
+        "--cursor-snap-px",
+        type=float,
+        default=60.0,
+        help="only restore when the pointer ended this close to the contact, "
+        "so a deliberate mouse move during a gesture is not undone "
+        "(default: 60)",
+    )
+    parser.add_argument(
+        "--all-windows",
+        action="store_true",
+        help="act on every window except the excluded classes, instead of "
+        "only the targeted ones",
+    )
+    parser.add_argument(
+        "--target-classes",
+        default="",
+        help="comma-separated window classes to act on (default: terminals)",
+    )
+    parser.add_argument(
+        "--exclude-classes",
+        default="",
+        help="comma-separated window classes to skip in all-windows mode; "
+        "these already handle touch themselves and would scroll twice",
     )
     parser.add_argument(
         "--allow-multiple",

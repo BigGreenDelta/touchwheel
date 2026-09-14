@@ -85,6 +85,42 @@ FIELDS: list[tuple[str, str, str, str]] = [
         "bool",
         "Print every HID report. Noisy; pointless for a windowless copy.",
     ),
+    (
+        "no_keep_cursor",
+        "Let touch move the cursor",
+        "bool",
+        "Off means the pointer is put back where it was before you touched.",
+    ),
+    (
+        "cursor_snap_px",
+        "Cursor restore radius (px)",
+        "float",
+        "Only restore when the pointer ended this close to the contact.",
+    ),
+    (
+        "cursor_restore_ms",
+        "Cursor restore window (ms)",
+        "float",
+        "Hold it in place this long; the promotion can land after the lift.",
+    ),
+    (
+        "all_windows",
+        "Scroll every window",
+        "bool",
+        "Act on anything not excluded, not just the targeted classes.",
+    ),
+    (
+        "target_classes",
+        "Target classes",
+        "text",
+        "Comma-separated window classes. Blank uses the built-in terminal list.",
+    ),
+    (
+        "exclude_classes",
+        "Excluded classes",
+        "text",
+        "Skipped in every-window mode; these handle touch themselves.",
+    ),
 ]
 
 DEFAULTS: dict[str, object] = {
@@ -99,6 +135,12 @@ DEFAULTS: dict[str, object] = {
     "lift_timeout_ms": 80.0,
     "settle_ms": 150.0,
     "debug": False,
+    "no_keep_cursor": False,
+    "cursor_snap_px": 60.0,
+    "cursor_restore_ms": 200.0,
+    "all_windows": False,
+    "target_classes": "",
+    "exclude_classes": "",
 }
 
 
@@ -258,6 +300,7 @@ class TouchwheelApp(App):
         background: $boost;
     }
     .row Input:focus { background: $accent 30%; }
+    .row Input.wide { width: 1fr; }
     /* Textual paints a Checkbox's marker cell with its own accent block. Next
        to a column of plain numeric fields that reads as an error state, so
        flatten it and let focus show as colour on the mark alone. */
@@ -325,6 +368,8 @@ class TouchwheelApp(App):
                     current = values.get(dest, DEFAULTS[dest])
                     if kind == "bool":
                         yield Checkbox(value=bool(current), id=f"f_{dest}")
+                    elif kind == "text":
+                        yield Input(value=str(current), id=f"f_{dest}", classes="wide")
                     else:
                         yield Input(value=str(current), id=f"f_{dest}")
                     yield Static(hint, classes="hint")
@@ -351,6 +396,9 @@ class TouchwheelApp(App):
                 values[dest] = bool(self.query_one(f"#f_{dest}", Checkbox).value)
                 continue
             raw = self.query_one(f"#f_{dest}", Input).value.strip()
+            if kind == "text":
+                values[dest] = raw
+                continue
             try:
                 values[dest] = float(raw)
             except ValueError:
