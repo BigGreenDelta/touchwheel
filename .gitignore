@@ -4,3 +4,4 @@
 .venv/
 __pycache__/
 touchwheel.json
+uv.lock
