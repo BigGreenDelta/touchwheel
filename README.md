@@ -101,7 +101,7 @@ A Textual UI edits them, with autostart and process controls on the same screen.
 only thing the launcher does, so double-click it, or:
 
 ```powershell
-.\touchwheel-service.cmd
+.\touchwheel.cmd
 ```
 
 `s` saves, `r` saves and restarts the background copy, `q` quits. Textual is pulled in on
