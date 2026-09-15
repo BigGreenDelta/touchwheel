@@ -633,17 +633,6 @@ def window_at(point: tuple[int, int] | None) -> wintypes.HWND | None:
     return user32.GetAncestor(child, GA_ROOT)
 
 
-def target_at(point: tuple[int, int] | None, targets: Targets) -> wintypes.HWND | None:
-    """The targeted window under a screen point, focused or not.
-
-    A real wheel scrolls whatever the pointer hovers over, with no focus
-    change. Targeting by position rather than focus reproduces that, and
-    sidesteps the fact that Windows Terminal takes focus on its own schedule.
-    """
-    root = window_at(point)
-    return root if targets.matches(root) else None
-
-
 def window_center(hwnd) -> tuple[int, int]:
     rect = wintypes.RECT()
     user32.GetWindowRect(hwnd, ctypes.byref(rect))
@@ -1362,6 +1351,13 @@ def run(args: argparse.Namespace) -> int:
         gesture.tick()
 
 
+# Posting the wheel message straight at the terminal is the mode to want, but
+# the flag is opt-in so the command line stays additive. With no settings file
+# at all -- a fresh checkout, or the autostart copy before anyone has opened
+# the settings UI -- start in that mode rather than the bare argparse default.
+FIRST_RUN = {"no_park": True}
+
+
 def load_settings(path: pathlib.Path = SETTINGS_PATH) -> dict:
     """Saved options, keyed by argparse destination name.
 
@@ -1379,7 +1375,12 @@ def save_settings(values: dict, path: pathlib.Path = SETTINGS_PATH) -> None:
     path.write_text(json.dumps(values, indent=2) + "\n", encoding="utf-8")
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
+    """Every option, with its built-in default.
+
+    Split out of ``main`` so the Textual front end can read the defaults from
+    here rather than keeping a second copy that drifts.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--pixels-per-notch",
@@ -1489,10 +1490,21 @@ def main() -> int:
         help="skip the single-instance lock (two copies double every notch)",
     )
     parser.add_argument("--debug", action="store_true", help="print every HID report")
+    return parser
+
+
+def defaults() -> dict:
+    """What a first run uses, keyed by argparse destination name."""
+    return {**vars(build_parser().parse_args([])), **FIRST_RUN}
+
+
+def main() -> int:
+    parser = build_parser()
 
     # Saved settings replace the built-in defaults; an explicit flag still wins.
     known = {action.dest for action in parser._actions}
-    parser.set_defaults(**{k: v for k, v in load_settings().items() if k in known})
+    saved = load_settings() or FIRST_RUN
+    parser.set_defaults(**{k: v for k, v in saved.items() if k in known})
 
     args = parser.parse_args()
 

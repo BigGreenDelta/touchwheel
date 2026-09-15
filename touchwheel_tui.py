@@ -12,8 +12,11 @@ Run it with:
 from __future__ import annotations
 
 import ctypes
+import os
+import pathlib
 import subprocess
 import sys
+import winreg
 from ctypes import wintypes
 
 from textual import on
@@ -123,25 +126,9 @@ FIELDS: list[tuple[str, str, str, str]] = [
     ),
 ]
 
-DEFAULTS: dict[str, object] = {
-    "no_park": True,
-    "pixels_per_notch": 40.0,
-    "slop_px": 12.0,
-    "natural": False,
-    "no_fling": False,
-    "fling_friction": 0.06,
-    "fling_min": 4.0,
-    "velocity_smoothing": 0.3,
-    "lift_timeout_ms": 80.0,
-    "settle_ms": 150.0,
-    "debug": False,
-    "no_keep_cursor": False,
-    "cursor_snap_px": 60.0,
-    "cursor_restore_ms": 200.0,
-    "all_windows": False,
-    "target_classes": "",
-    "exclude_classes": "",
-}
+# Read from the shim's own parser, so a new flag or a changed default needs
+# no second copy here.
+DEFAULTS: dict[str, object] = touchwheel.defaults()
 
 
 # --- Win32 / process helpers ----------------------------------------------
@@ -179,10 +166,7 @@ def pythonw() -> str:
     if _PYTHONW is not None:
         return _PYTHONW
 
-    import pathlib
-
     candidate = pathlib.Path(getattr(sys, "_base_executable", sys.executable))
-    import os
 
     # Drop the inherited virtualenv, or uv reuses the very throwaway
     # environment we are trying to resolve our way out of.
@@ -218,8 +202,6 @@ def pythonw() -> str:
 
 
 def autostart_installed() -> bool:
-    import winreg
-
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY) as key:
             winreg.QueryValueEx(key, RUN_NAME)
@@ -229,8 +211,6 @@ def autostart_installed() -> bool:
 
 
 def set_autostart(enabled: bool) -> None:
-    import winreg
-
     access = winreg.KEY_SET_VALUE
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, access) as k:
         if enabled:
@@ -273,9 +253,9 @@ def stop_process() -> None:
 
 class TouchwheelApp(App):
     # Textual's defaults are generous: an Input carries a border and so is
-    # three rows tall, and a Button likewise. Eleven settings then need a
-    # scrollback of their own. Strip the borders and keep every field on one
-    # row, with its explanation beside it rather than beneath it.
+    # three rows tall, and a Button likewise. A screen's worth of settings then
+    # needs a scrollback of its own. Strip the borders and keep every field on
+    # one row, with its explanation beside it rather than beneath it.
     CSS = """
     Screen { layout: vertical; }
     #state { padding: 0 2; background: $boost; height: 2; }

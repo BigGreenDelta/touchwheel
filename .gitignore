@@ -1,6 +1,6 @@
-__pycache__/
 *.pyc
+.ruff_cache/
+.serena/
 .venv/
-out.log
+__pycache__/
 touchwheel.json
-debug.log
