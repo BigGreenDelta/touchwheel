@@ -825,6 +825,40 @@ class Gesture:
         user32.SetCursorPos(cx, cy)
         self.parked = True
 
+    def hold_cursor(self) -> None:
+        """Undo the pointer teleport Windows makes out of a touch, as it happens.
+
+        Windows Terminal consumes touch itself, so no promotion occurs and
+        there is nothing to undo. An app that lets the promotion through --
+        a browser, say -- has the pointer dragged to the finger, and repairing
+        that only after the lift is too late to be comfortable: the hand is
+        already moving the mouse from the wrong place.
+
+        The promotion emits no raw input of its own -- measured: zero mouse
+        packets, null-handle or otherwise, arrive during a pan -- so there is
+        nothing to react to and the pointer has to be watched instead. This
+        runs after every HID report and on every tick of an active gesture.
+
+        The target is wherever the physical mouse last was, so a hand on the
+        mouse keeps control throughout; Windows applies its own acceleration to
+        that movement and this only reads the result back.
+        """
+        if self.args.no_keep_cursor or not self.active:
+            return
+        target = mouse_watcher.last_real_position()
+        if target is None:
+            return
+        now = wintypes.POINT()
+        user32.GetCursorPos(ctypes.byref(now))
+        if (now.x, now.y) == (target.x, target.y):
+            return
+        # No ignore() here: SetCursorPos is not injected input, and anything it
+        # did report would carry a null device handle, which is filtered out
+        # before note_real_move is ever reached.
+        user32.SetCursorPos(target.x, target.y)
+        if self.args.debug:
+            print(f"  cursor held at ({target.x}, {target.y})", flush=True)
+
     def restore_cursor(self) -> None:
         if self.parked and self.saved_cursor is not None:
             mouse_watcher.ignore()
@@ -931,6 +965,8 @@ class Gesture:
             else:
                 self.restore_until = 0.0
                 self.cursor_before = None
+
+        self.hold_cursor()
 
         if self.active and self.last_report:
             idle_ms = (time.monotonic() - self.last_report) * 1000.0
@@ -1202,6 +1238,7 @@ def handle_input(lparam, gesture: Gesture, args: argparse.Namespace) -> None:
             )
 
         gesture.update(info, contacts, x, y)
+        gesture.hold_cursor()
 
 
 def claim_single_instance() -> bool:
