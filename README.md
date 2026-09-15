@@ -78,8 +78,10 @@ Synthetic wheel input does pass the gate. That is the whole trick.
 ## Usage
 
 ```powershell
-uv run --no-project python touchwheel.py --no-park
+uv run --no-project python touchwheel.py
 ```
+
+`--help` lists every option; each one also has a field in the settings UI.
 
 Leave it running in its own window. Pan on the touchscreen over any Windows Terminal
 window.
@@ -95,11 +97,11 @@ dashes replaced by underscores. The background copy is launched with **no argume
 reads that file at startup, so changing a value takes effect on the next start without
 touching the autostart entry. An explicit command-line flag still overrides the file.
 
-A Textual UI edits them, with autostart and process controls on the same screen. It is what
-you get by running the launcher with no arguments or double-clicking it:
+A Textual UI edits them, with autostart and process controls on the same screen. It is the
+only thing the launcher does, so double-click it, or:
 
 ```powershell
-touchwheel-service.cmd
+.\touchwheel-service.cmd
 ```
 
 `s` saves, `r` saves and restarts the background copy, `q` quits. Textual is pulled in on
@@ -107,35 +109,13 @@ demand by `uv run --with textual`; it is not a dependency of the shim itself.
 
 ## Running it in the background
 
-If the Textual UI cannot start, the launcher falls back to a plain menu, also reachable as
-`touchwheel-service.cmd menu`:
+Everything is in that one screen: **Start**, **Stop**, **Install autostart** and **Remove
+autostart** sit above the settings, with the current state on the line above them.
+The launcher has no command-line surface of its own - to drive the shim by hand, run the
+shim by hand.
 
-```
-  Autostart : NOT installed
-  Process   : not running
-
-  [1]  Install autostart  (and start now)
-
-  [2]  Start
-  [3]  Stop
-  [4]  Status
-
-  [5]  Remove autostart   (and stop)
-  [Q]  Quit
-```
-
-The same actions work as arguments, for scripting:
-
-```
-touchwheel-service.cmd install     start at every logon, and start now
-touchwheel-service.cmd uninstall   stop it and remove autostart
-touchwheel-service.cmd start       start it now
-touchwheel-service.cmd stop        stop it now
-touchwheel-service.cmd status      show autostart state and running processes
-```
-
-Launches `pythonw.exe` (resolved through `uv`), so there is no console window and no `uv`
-wrapper process left in the tree.
+Autostart runs `pythonw.exe` (resolved through `uv`), so there is no console window and no
+`uv` wrapper process left in the tree.
 
 **This is deliberately not a Windows service.** Services run in session 0, which cannot see
 the desktop's windows and cannot inject input into them - `SendInput`, `PostMessage` and the
@@ -147,8 +127,8 @@ elevation and this needs none.
 
 | Mode | Behaviour |
 | --- | --- |
-| `--no-park` | Posts `WM_MOUSEWHEEL` straight to the terminal's XAML input site. The mouse cursor is never moved. Recommended. |
-| default | Parks the cursor under your finger and synthesises a real wheel event with `SendInput`, restoring the cursor on lift. Use if posting turns out not to reach your terminal. |
+| `--no-park` | Posts `WM_MOUSEWHEEL` straight to the terminal's XAML input site. The mouse cursor is never moved. This is what a first run uses, with no settings file and no flag. |
+| cursor park | Parks the cursor under your finger and synthesises a real wheel event with `SendInput`, restoring the cursor on lift. Use if posting turns out not to reach your terminal. |
 
 ### Options
 
@@ -163,6 +143,13 @@ elevation and this needs none.
 | `--fling-min` | 4 | Notches/sec below which a fling will not start, and at which one stops. |
 | `--velocity-smoothing` | 0.3 | EMA weight for the newest speed sample. |
 | `--settle-ms` | 150 | Only used on the focus fallback path, when no screen mapping is available. |
+| `--no-keep-cursor` | off | Let touch drag the mouse pointer, as Windows does by default. Off means the pointer is put back where it was. |
+| `--cursor-snap-px` | 60 | Only restore the pointer when it ended this close to the contact, so a deliberate mouse move during a gesture is not undone. |
+| `--cursor-restore-ms` | 200 | How long to hold the pointer in place after a lift, since the touch-to-mouse promotion can land after the last HID report. |
+| `--all-windows` | off | Act on every window except the excluded classes, instead of only the targeted ones. |
+| `--target-classes` | terminals | Comma-separated window classes to act on. |
+| `--exclude-classes` | (built-in) | Comma-separated classes to skip in all-windows mode; these handle touch themselves and would scroll twice. |
+| `--allow-multiple` | off | Skip the single-instance lock. Two copies double every notch. |
 | `--debug` | off | Print every HID report, the mapped screen point, and each wheel emission. |
 
 ## Tuning for Claude Code
@@ -202,7 +189,7 @@ Run with `--debug` and read the first lines.
 | No report lines at all | Digitizer does not enumerate as usage `0x0D`/`0x04` | Widen the Raw Input registration |
 | `y=None` | Y sits in a link collection rather than collection 0 | Needs per-contact parsing |
 | `screen=None` | `GetPointerDevices` handle match failed | Falls back to focus targeting; `--settle-ms` applies |
-| Wheel lines appear, nothing scrolls | Wrong delivery target | Drop `--no-park` to use the cursor-park path |
+| Wheel lines appear, nothing scrolls | Wrong delivery target | Turn off "Post wheel directly" to use the cursor-park path |
 | Taps scroll | Slop too small, or lift not detected | Raise `--slop-px`; check for `lift inferred` lines |
 | `lift inferred` fires mid-pan | Report rate slower than the timeout | Raise `--lift-timeout-ms` |
 
